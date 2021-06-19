@@ -13,3 +13,7 @@ We won't use this in the end.
 kubebuilder init --domain flagger.app --repo flagger.app/tester
 kubebuilder create api --group tester --version v1alpha1 --kind Tester
 ```
+
+## Questions
+
+- Do we see any issues with using fluxcd/pkg in a flagger related project?
