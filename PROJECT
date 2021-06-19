@@ -1,0 +1,6 @@
+domain: flagger.app
+layout:
+- go.kubebuilder.io/v3
+projectName: tester
+repo: flagger.app/tester
+version: "3"
