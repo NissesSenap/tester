@@ -3,4 +3,14 @@ layout:
 - go.kubebuilder.io/v3
 projectName: tester
 repo: flagger.app/tester
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: flagger.app
+  group: tester
+  kind: Tester
+  path: flagger.app/tester/api/v1alpha1
+  version: v1alpha1
 version: "3"

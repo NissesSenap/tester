@@ -1,0 +1,7 @@
+apiVersion: tester.flagger.app/v1alpha1
+kind: Tester
+metadata:
+  name: tester-sample
+spec:
+  # Add fields here
+  foo: bar
