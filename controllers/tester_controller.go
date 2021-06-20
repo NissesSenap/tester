@@ -21,11 +21,14 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	testerv1alpha1 "flagger.app/tester/api/v1alpha1"
 )
@@ -34,6 +37,7 @@ import (
 type TesterReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	//K8sClient kubernetes.Interface
 }
 
 const (
@@ -55,44 +59,68 @@ const (
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *TesterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
 	var tester testerv1alpha1.Tester
 	if err := r.Get(ctx, req.NamespacedName, &tester); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	/*
-		Get a list of current Testers and check the status against it.
-		Need to be able to compare the specs towards a existing deployment.
-		if not found create it, make sure that we set owenerRef correct on the deployment.
-			For now lets use a hello world thing with a sleep.
-		Continue from there...
-	*/
+	// This is the correct Deployment according to the CR, compare it to the real deployed one
+	deployment, err := r.ParseConfig(tester)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Check for existing deployment
+	_, err = r.GetTesterDeployment(ctx, req)
+	//		https://book-v1.book.kubebuilder.io/basics/simple_controller.html
+
+	if err != nil && errors.IsNotFound(err) {
+		logger.Info("Creating Deployment %s/%s\n", deployment.Namespace, deployment.Name)
+		err = r.Create(ctx, deployment)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+	}
+
+	// TODO(Edvin) How should i compare the data with the existing deployment
+
 	return ctrl.Result{}, nil
 }
 
-func (r *TesterReconciler) GetTesterDeployment(ctx context.Context, req ctrl.Request) (*appsv1.Deployment, error) {
+// ParsesConfig check the config and generates how the deployment should look
+func (r *TesterReconciler) ParseConfig(tester testerv1alpha1.Tester) (*appsv1.Deployment, error) {
+	// Need some kind of asbtraction to forward what kind of config that we want to check
+	// Tekton, Webhook, etc. doing if for each isn't nice.
 
-	// TODO (Edvin) understand how to actually get the object, I need to verify against it.
-	err := r.Client.Get(ctx, client.ObjectKey{
-		Namespace: req.Namespace,
-		Name:      req.Name,
-	}, &appsv1.Deployment{})
-	if err != nil {
-		return &appsv1.Deployment{}, err
+	deployment := &appsv1.Deployment{}
+	var err error
+	if tester.Spec.Tekton != nil {
+		deployment, err = r.parseTektonConfig(tester)
+		if err != nil {
+			return &appsv1.Deployment{}, err
+		}
 	}
-	return &appsv1.Deployment{}, nil
+
+	//TODO(Edvin) Add all the generic stuff like certificate, blocking, ownerRef? Or is that done by the controller?
+	return deployment, nil
 }
 
-func (r *TesterReconciler) CreateTesterDeployment(ctx context.Context, tester testerv1alpha1.Tester) error {
-	// TODO(Edvin): How should I send around ctx?, probably in the struct...
-
+func (r *TesterReconciler) parseTektonConfig(tester testerv1alpha1.Tester) (*appsv1.Deployment, error) {
 	deploymentName := tester.ObjectMeta.Name + "-deployment"
+
+	// TODO(Edvin) shoulden't define this much, instead we should patch it in for each config change to make the whole thing
+	namespace := tester.ObjectMeta.Namespace
+
+	// TODO(Edvin), what will happen if this value is not defined? Have to write test to understand.
+	if tester.Spec.Tekton.Namespace != "" {
+		namespace = tester.Spec.Tekton.Namespace
+	}
 
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      tester.ObjectMeta.Name + "-deployment",
+			Name:      deploymentName,
 			Namespace: tester.ObjectMeta.Namespace,
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -107,18 +135,40 @@ func (r *TesterReconciler) CreateTesterDeployment(ctx context.Context, tester te
 							Name: containerName,
 							// TODO (Edvin) enable the user to define he's own deployment spec
 							Image: imageName,
+							Args: []string{"--kind=tekton",
+								"--URL=" + tester.Spec.Tekton.Url,
+								"--namespace=" + namespace,
+							},
 						},
 					},
 				},
 			},
 		},
 	}
-	err := r.Create(ctx, deploy)
+
+	return deploy, nil
+}
+
+// GetTesterDeployment gets the current deployment connected with the CR request.
+func (r *TesterReconciler) GetTesterDeployment(ctx context.Context, req ctrl.Request) (*appsv1.Deployment, error) {
+	var deployment2 appsv1.Deployment
+	deploymentNamespace := types.NamespacedName{
+		Namespace: req.Namespace,
+		Name:      req.Name + "-deployment",
+	}
+	err := r.Get(ctx, deploymentNamespace, &deployment2)
 	if err != nil {
-		return err
+		return &appsv1.Deployment{}, err
 	}
 
-	return nil
+	/*
+		TODO(Edvin) remove this, when it feels okay.
+		deployment, err := r.K8sClient.AppsV1().Deployments(req.Namespace).Get(ctx, req.Name, metav1.GetOptions{})
+		if err != nil {
+			return &appsv1.Deployment{}, err
+		}
+	*/
+	return &deployment2, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
