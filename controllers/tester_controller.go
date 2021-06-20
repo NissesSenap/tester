@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	testerv1alpha1 "flagger.app/tester/api/v1alpha1"
+	"github.com/NissesSenap/tester/pkg/utils"
 )
 
 // TesterReconciler reconciles a Tester object
@@ -103,32 +104,65 @@ func (r *TesterReconciler) ParseConfig(tester testerv1alpha1.Tester) (*appsv1.De
 		}
 	}
 
-	//TODO(Edvin) Add all the generic stuff like certificate, blocking, ownerRef? Or is that done by the controller?
+	//TODO(Edvin) Add all the generic stuff like certificate, blocking.
 	return deployment, nil
 }
 
+func (r *TesterReconciler) getMeta(tester testerv1alpha1.Tester) metav1.ObjectMeta {
+	meta := r.GetObjectMeta(tester)
+	meta.Labels = r.getLabels()
+	return meta
+}
+
+func (r *TesterReconciler) GetObjectMeta(tester testerv1alpha1.Tester) metav1.ObjectMeta {
+	meta := r.GetNameMeta(tester.ObjectMeta.Name, tester)
+	meta.OwnerReferences = []metav1.OwnerReference{
+		{
+			APIVersion: tester.APIVersion,
+			Kind:       tester.Kind,
+			Name:       tester.Name,
+			UID:        tester.UID,
+			Controller: utils.BoolPointer(true),
+		},
+	}
+	return meta
+}
+
+func (t *TesterReconciler) GetNameMeta(name string, tester testerv1alpha1.Tester) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:      name + "-deployment",
+		Namespace: tester.Namespace,
+	}
+}
+
+// getLabels is used for both setting labels and labelSelectors
+func (r *TesterReconciler) getLabels() map[string]string {
+	labels := map[string]string{
+		// TODO(Edvin), need to have a easy way to add custom labels and overwrite all of them if wanted.
+		"something": "hej",
+	}
+
+	return labels
+}
+
 func (r *TesterReconciler) parseTektonConfig(tester testerv1alpha1.Tester) (*appsv1.Deployment, error) {
-	deploymentName := tester.ObjectMeta.Name + "-deployment"
-
 	// TODO(Edvin) shoulden't define this much, instead we should patch it in for each config change to make the whole thing
-	namespace := tester.ObjectMeta.Namespace
+	meta := r.getMeta(tester)
 
+	namespace := tester.Namespace
 	// TODO(Edvin), what will happen if this value is not defined? Have to write test to understand.
 	if tester.Spec.Tekton.Namespace != "" {
 		namespace = tester.Spec.Tekton.Namespace
 	}
 
 	deploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      deploymentName,
-			Namespace: tester.ObjectMeta.Namespace,
-		},
+		ObjectMeta: meta,
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"deployment": deploymentName},
+				MatchLabels: r.getLabels(),
 			},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"deployment": deploymentName}},
+				ObjectMeta: metav1.ObjectMeta{Labels: meta.Labels},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
