@@ -31,7 +31,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	testerv1alpha1 "flagger.app/tester/api/v1alpha1"
-	"github.com/NissesSenap/tester/pkg/utils"
 )
 
 // TesterReconciler reconciles a Tester object
@@ -122,10 +121,15 @@ func (r *TesterReconciler) GetObjectMeta(tester testerv1alpha1.Tester) metav1.Ob
 			Kind:       tester.Kind,
 			Name:       tester.Name,
 			UID:        tester.UID,
-			Controller: utils.BoolPointer(true),
+			Controller: BoolPointer(true),
 		},
 	}
 	return meta
+}
+
+// BoolPointer converts bool to *bool
+func BoolPointer(b bool) *bool {
+	return &b
 }
 
 func (t *TesterReconciler) GetNameMeta(name string, tester testerv1alpha1.Tester) metav1.ObjectMeta {
